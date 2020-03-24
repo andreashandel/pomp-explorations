@@ -3,6 +3,13 @@
 # no data fitting
 # trying to do COVID
 #######################################################################
+#examples are here
+#https://kingaa.github.io/pomp/vignettes/oaxaca.html#a_more_complex_example:_a_stochastic,_seasonal_sir_model
+#https://kingaa.github.io/pomp/vignettes/He2010.html
+#https://kingaa.github.io/sbied/stochsim/stochsim.html
+#https://kingaa.github.io/sbied/index.html
+#https://kingaa.github.io/sbied/stochsim/exercises.html#basic-exercise-the-seir-model
+
 
 ## ----prelims,cache=FALSE-------------------------------------------------
 set.seed(123L)
