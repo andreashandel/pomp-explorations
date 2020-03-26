@@ -21,88 +21,152 @@ library(pomp)
 #1 step for model
 #######################################################################
 covid_step <- Csnippet("
-  double trans[10];
-  double rate[6];
+  double trans[17]; //C indexes at 0, I hate that so I'm making things 1 bigger and start with index 1, i.e. leave trans[0] empty
   double Idetected;
   double Iundetected;
   double Itot;
+  double N;
 
   Idetected = I1+I2+I3+I4
   Iundetected = Iu1+Iu2+Iu3+Iu4
   Itot = Idetected + Iundetected  
+  N = S + E1 + E2 + E3 + E4 + E5 + E6 + Itot + H + R;
   
-  N = S + E1 + E2 + E3 + E4 + E5 + E6 + Itot + R;
-  
-  //time-dependent transmission rate gamma
+  //time-dependent rate of movement through infected and detected classes
+  //z is the date at which the intervention starts - it shouldn't really be less than 0
+  //z days after simulation start, the time at which individuals are diagnosed and thus the time spent in the I categories before ending up in H decreases
   if (z<0)
     gamma = 1/(max(-0.57437*(t+12)+15.45651, a0)) 
+  else
+    if (t<=z) //if time is less then intervention time, the 
+      gamma = b
     else
-    gamma <- ifelse(t<=z, gamma <- b, gamma <- a0);
-  
-  
-  sigmai <- 6*sigma  # multiplier 2 for pseudo stages
-  etat <- eta(t,w)     # case notification rate
-  betat <- beta(t,w)   # time dependent transmissibility, presymptomatic=1 causes this transmissibility to apply to late stage latent cases as well
-  
-  rate[0] = betat*Idetected/N+betat*c*Iundetected/N+presymptomatic*betat*c*E6/N;      // transmission
-  rate[1] = 6*sigma;           // transition between E compartments 1/2
-  rate[2] = 6*sigma;           // transition between E compartments
-  rate[3] = 6*sigma;           // transition between E compartments
-  rate[4] = 6*sigma;           // transition between E compartments
-  rate[5] = 6*sigma;           // transition between E compartments 5/6
-  rate[6] = 6*sigma;           // transition between E compartment and I or Iu
-  rate[7] = 4*gamma;           // transition between I compartments 1/2
-  rate[8] = 4*gamma;           // transition between I compartments 2/3
-  rate[9] = 4*gamma;           // transition between I compartments 3/4
-  rate[10] = 4*gamma;          // transition between I compartments and H
-  rate[11] = b;           // transition between Iu compartments 1/2
-  rate[12] = b;           // transition between Iu compartments 2/3
-  rate[13] = b;           // transition between Iu compartments 3/4
-  rate[14] = b;           // transition between Iu compartments and Ru
-  rate[15] = etat;        // transition between H compartments and C
-  
-  
-  // transitions between classes
-  reulermultinom(2,S,&rate[0],dt,&trans[0]);
-  reulermultinom(2,E,&rate[2],dt,&trans[2]);
-  reulermultinom(2,I,&rate[4],dt,&trans[4]);
+      gamma = a0
 
+  //time dependent fraction of those that move into detected category at the end of the E phase
+  //w days after simulation start, the fraction detected (those that move into I instead of Iu after exiting E) increases from q0 to q1
+  //note that both higher fraction detected and faster rate of detection speed up arrival of individuals in H and subsequently C
+  //this parameter is called q in the original code
+  if (t<=w)
+    detect_frac = q0
+  else
+    detect_frac = q1
+
+  //time-dependent case notification rate, i.e. rate at which individuals in H compartment (confirmed cases) move into C (notified cases)
+  //currently no change after time w is assumed
+  //also note that this leads to an exponentially distributed process from H to C, which is unrealistic
+  //this rate is called etat in the original code
+  if (t<=w)
+    asc_rate = 0.2
+  else
+    asc_rate = 0.2
+
+
+  //time-dependent transmission 
+  //w days after simulation start, an intervention reduces transmission rate by some factor
+  if (t<=w)
+    betat = beta0
+  else
+    betat = beta0/beta.factor
   
-  S += trans[0];
-  E1 += ;
+  //force of infection
+  //time dependent transmission, multiplied by different groups
+  //undetected are assumed to be less transmissible by factor c
+  //if variable presymptomatic is 1, then the last stage of presymptomatic can also transmit
+  foi = betat*Idetected/N+betat*c*Iundetected/N+presymptomatic*betat*c*E6/N;      // transmission
+
+
+  //need to multiply by 6 since we have 6 latent stages
+  sigma = 6*sigma
+  
+  //gamma_u is called b in the original code
+  
+  
+  // define all transmission rates
+  trans[1] = rbinom(S,1-exp(-foi*dt));              //transition from S to E
+  trans[2] = rbinom(E1,1-exp(-sigma*dt));           // transition between E compartments 1/2
+  trans[3] = rbinom(E2,1-exp(-sigma*dt));           // transition between E compartments
+  trans[4] = rbinom(E3,1-exp(-sigma*dt));           // transition between E compartments
+  trans[5] = rbinom(E4,1-exp(-sigma*dt));           // transition between E compartments 4/5
+  trans[6] = rbinom(E5,1-exp(-sigma*dt));           // transition between E compartments 5/6
+  
+  trans[7] = rbinom(E6,(1-exp(-sigma*dt))*detect_frac);           // transition between E6 compartment and I 
+  trans[8] = rbinom(E6,(1-exp(-sigma*dt))*(1-detect_frac));           // transition between E6 compartment and I 
+  
+  trans[9] = rbinom(I1,1-exp(-gamma*dt));           // transition between I compartments 1/2
+  trans[10] = rbinom(I2,1-exp(-gamma*dt));           // transition between I compartments 2/3
+  trans[11] = rbinom(I3,1-exp(-gamma*dt));           // transition between I compartments 3/4
+  trans[12] = rbinom(I4,1-exp(-gamma*dt));          // transition between I compartments and H
+  
+  trans[13] = rbinom(Iu1,1-exp(-gamma_u*dt));           // transition between Iu compartments 1/2
+  trans[14] = rbinom(Iu2,1-exp(-gamma_u*dt));           // transition between Iu compartments 2/3
+  trans[15] = rbinom(Iu3,1-exp(-gamma_u*dt));           // transition between Iu compartments 3/4
+  trans[16] = rbinom(Iu4,1-exp(-gamma_u*dt));           // transition between Iu compartments and Ru
+  
+  trans[17] = rbinom(H,1-exp(-asc_rate*dt));        // transition between H compartments and C
+  
+  // define all transmissions for each compartment
+  S += - trans[1];
+  
+  E1 += trans[1] - trans[2];
   E2 += trans[2] - trans[3];
   E3 += trans[3] - trans[4];
   E4 += trans[4] - trans[5];
   E5 += trans[5] - trans[6];
-  E6 += dN_SE - dN_EI;
-  I1 += dN_EI - dN_IR;
-  I2 += dN_EI - dN_IR;
-  I3 += dN_EI - dN_IR;
-  I4 += dN_EI - dN_IR;
-  Iu1 += dN_EI - dN_IR;
-  Iu2 += dN_EI - dN_IR;
-  Iu3 += dN_EI - dN_IR;
-  Iu4 += dN_EI - dN_IR;
-  H += dN_IR;
-  Ru += dN_IR;
-  C += dN_IR;
+  E6 += trans[6] - trans[7] - trans[8];
+  
+  I1 += trans[7] - trans[9];
+  I2 += trans[9] - trans[10];
+  I3 += trans[10] - trans[11];
+  I4 += trans[11] - trans[12];
+  
+  Iu1 += trans[8] - trans[13];
+  Iu2 += trans[13] - trans[14];
+  Iu3 += trans[14] - trans[15];
+  Iu4 += trans[15] - trans[16];
+  
+  H += trans[12] - trans[17];
+  Ru += trans[16];
+  C += trans[17];
   
   
 ")
-
-
-
-
-params <- c( )
-
 
 covid_init <- Csnippet("
-  S = nearbyint(eta*N);
-  E = 0;
-  I = 1;
-  R = nearbyint((1-eta)*N);
-  H = 0;
+  S = S;
+  E1 = E1;
+  E2 = E2;
+  E3 = E3;
+  E4 = E4;
+  E5 = E5;
+  E6 = E6;
+  I1 = I1;
+  I2 = I2;
+  I3 = I3;
+  I4 = I4;
+  Iu1 = Iu1;
+  Iu2 = Iu2;
+  Iu3 = Iu3;
+  Iu4 = Iu4;
+  H = H;
+  Ru = Ru;
+  C = C;
 ")
+
+#parameter names
+#beta0 is base transmission rate
+#sigma is rate of movement through E categories (inverse is duration of latent period)
+#b is rate of movement through Iu categories (inverse is duration of undetected infection). Also called gamma_u in my code
+#a0 is rate of movement through I categories post intervention, i.e. shorter duration than Iu because of diagnosis and movement into H
+#z is day at which intervention kicks in that leads to faster diagnosis
+#w is day at which intervention kicks in that leads to larger fraction diagnosed and reduction in transmission rate
+#c is a factor by which transmission of Iu individuals is lowered compared to I individuals 
+#presymptomatic is either 0 or 1 and indicates if some presymptomatic individuals transmit
+#q0 is the fraction detected before intervention
+#q1 is the fraction detected post intervention
+parnames = c("beta0", "sigma", "z", "b", "a0", "w", "c", "presymptomatic","q0","q1")
+#variable names
+varnames = c("S", "E1", "E2", "E3", "E4", "E5", "E6", "I1", "I2", "I3", "I4", "Iu1", "Iu2", "Iu3", "Iu4", "H", "Ru", "C")
 
 #create pomp object
 covid_model <- pomp(data = fake,
@@ -112,11 +176,9 @@ covid_model <- pomp(data = fake,
                 rmeasure=rmeas,
                 dmeasure=dmeas,
                 accumvars="H",
-                paramnames = ,
-                statenames = c("S", "E1", "E2", "E3", "E4", "E5", "E6", "I1", "I2", "I3", "I4", "Iu1", "Iu2", "Iu3", "Iu4", "H", "Ru", "C") 
+                paramnames = parnames,
+                statenames = varnames  
               ) 
-
-
 
 
 # load scenarios, run model for each scenario
@@ -131,7 +193,7 @@ for(i in 1:dim(scenarios)[1]){
 
   #run simulation
   sims <- pomp::simulate(covid_model,
-                         params=c(Beta=40,mu_EI=0.8,mu_IR=1.3,rho=0.5,eta=0.06,N=38000),
+                         params=parms,
                          nsim=25, format="data.frame", include.data=FALSE)
   
   #scenarios.output[[i]] <- evaluate.model(params=parms, init = init, nsims=25, nstep=NULL, start=startdate)
