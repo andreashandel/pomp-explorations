@@ -1,0 +1,669 @@
+---
+title: "Scenario analysis for the transmission of COVID-19 in Georgia"
+author: "John M. Drake (jdrake@uga.edu)"
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+header-includes:
+  - \usepackage{amsmath}
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, cache=FALSE, warning=FALSE)
+today <- Sys.Date()
+
+# OLD - from version 1
+#state.data <- read.csv('COVID19 US cases by state - Sheet1.csv')
+#state.data$Date <- as.Date(state.data$X, format='%Y-%m-%d')
+#georgia <- data.frame(date=state.data$Date, cases=state.data$GA)
+#georgia[is.na(georgia)] <- 0
+#georgia <- georgia[14:dim(georgia)[1],]
+
+# OLD pull data directly from github repo
+# state.data <- read.csv('https://raw.githubusercontent.com/CEIDatUGA/COVID-19-DATA/master/UScases_by_state_wikipedia.csv?token=ABQMQXYOBV7TFRDQXWX2YQC6PEFIU')
+# state.data <- state.data[1:(dim(state.data)[1]-1),1:(dim(state.data)[2]-1)]  # drop row of totals and column of update times
+# state.data$Date <- as.Date(state.data$Date, format='%b %d')
+# state.data[is.na(state.data)] <- 0
+# georgia <- data.frame(date=state.data$Date, cases=state.data$GA)
+# georgia <- georgia[14:dim(georgia)[1],]
+
+# OLD pull data directly from github repo
+# state.data.deaths <- read.csv('https://raw.githubusercontent.com/CEIDatUGA/COVID-19-DATA/master/USfatalities_by_state_wikipedia.csv?token=ABQMQX2U3ETGYEKRRZR2YJK6QC3ZE')
+# state.data.deaths <- state.data.deaths[1:(dim(state.data.deaths)[1]-1),1:(dim(state.data.deaths)[2]-1)]  # drop row of totals and column of update times
+# state.data.deaths$Date <- as.Date(state.data.deaths$Date, format='%b %d')
+# state.data.deaths[is.na(state.data.deaths)] <- 0
+# georgia.deaths <- data.frame(date=state.data.deaths$Date, cases=state.data.deaths$GA)
+
+# Following codes reads a spreadsheet compiled from GA-DPH - coded to replace old tables (added 23 March 2020)
+data <- read.csv('https://raw.githubusercontent.com/CEIDatUGA/COVID-19-DATA/master/GA_daily_status_report_GDPH.csv?token=ABQMQXYHNZXBU7W3UPEIJCS6QKTCE')
+data$date <- as.Date(data$date, format='%m/%d/%y')
+data[is.na(data)] <- 0
+
+georgia <- aggregate(data$cases_cumulative, by=list(data$date), FUN = function(x) max(x))
+names(georgia) <- c('date', 'cases')
+georgia.deaths <- aggregate(data$fatalities_cumulative, by=list(data$date), FUN = function(x) max(x))
+names(georgia.deaths) <- c('date', 'cases')
+
+#format as daily incidence for plotting functions later
+georgia <- data.frame(date=tail(georgia$date,-1), cases=diff(georgia$cases))
+georgia.deaths <- data.frame(date=tail(georgia.deaths$date,-1), cases=diff(georgia.deaths$cases))
+```
+
+
+```{r styles}
+source('style-definitions.R')
+source('stochastic-GA-simulator.R') #contains all the simulation files, removed from here
+```
+
+## Introduction
+
+The epidemiology of COVID-19 in the United States is poorly understood.
+To better understand the potential range of epidemic outcomes in the state of Georgia, we developed a model based on data from Hubei Province, China calibrated to regionally specific conditions in Georgia and observations of the number of reported cases in Georgia in early March.
+
+## Data
+
+At the time of this report, Georgia is reporting `r sum(georgia$cases)` cases and `r sum(georgia.deaths$cases)` deaths.
+
+```{r}
+plot(georgia$date, georgia$cases, 
+     type='h', lwd=5, lend='butt', xlab='', 
+     col = col.cases,
+     ylab='New case notifications', 
+     main='COVID-19 cases in Georgia')
+
+points(georgia.deaths$date+0.3, georgia.deaths$cases, 
+     type='h', lwd=5, lend='butt', xlab='', 
+     col = col.I)
+
+legend('topleft', bty='n', col=c(col.cases, col.I), legend=c('Cases','Deaths'), lwd=5)
+```
+
+
+
+```{r plot-function}
+plot.model <- function(data, log='y', title=''){
+  # The function `plot.model` provides automated visualization of model simulations
+  
+  # process data
+  nsims <- length(data)
+ 
+  for(i in 1:nsims) data[[i]]$I <- data[[i]]$I1 + data[[i]]$I2 + data[[i]]$I3 +
+      data[[i]]$I4
+  for(i in 1:nsims) data[[i]]$Iu <- data[[i]]$Iu1 + data[[i]]$Iu2 + data[[i]]$Iu3 +
+      data[[i]]$Iu4
+  for(i in 1:nsims) data[[i]]$E <- data[[i]]$E1 + data[[i]]$E2 + data[[i]]$E3 +
+      data[[i]]$E4 + data[[i]]$E5 + data[[i]]$E6
+  
+  max.time<-data[[1]]$cum.time[max(which(data[[1]]$I>0))] #maximum time in first simulation
+  max.y<-max(data[[1]]$C)       #find max total confirmed cases for plotting range
+  
+  # calculate means
+  m1 <- m2 <- m3 <- m4 <- m5 <- matrix(nrow=length(data[[1]]$I), ncol=nsims)
+  for(i in 1:nsims){
+    m1[,i] <- data[[i]]$E
+    m2[,i] <- data[[i]]$I+data[[i]]$Iu
+   # m3[,i] <- data[[i]]$Iu
+    m4[,i] <- data[[i]]$H
+    m5[,i] <- data[[i]]$C
+  }
+  E.mean <- rowMeans(m1)
+  I.mean <- rowMeans(m2)
+ # Iu.mean <- rowMeans(m3)
+  H.mean <- rowMeans(m4)
+  C.mean <- rowMeans(m5)
+  
+  # colors
+  # E.col <- rgb(0,1,0,.25)
+  # I.col <- rgb(1,0,0,.25)
+  # Iu.col <- rgb(0.5, 0.5, 0, 0.25)
+  # H.col <- rgb(0,0,1,.25)
+  # C.col <- rgb(0,0,0,.25)
+  # E.mean.col <- rgb(0,1,0,1)
+  # I.mean.col <- rgb(1,0,0,1)
+  # Iu.mean.col <- rgb(0.5,0.5,0,1)
+  # H.mean.col <- rgb(0,0,1,1)
+  # C.mean.col <- rgb(0,0,0,1)
+  
+  #set up plot
+  plot(I~cum.time,data=data[[1]],xlab='',ylab='Cases',col=1,
+       xlim=c(0,max.time),ylim=c(1,max.y), type='n', lty=1, log=log,
+       axes=FALSE, main=title, cex.main=0.8) # set up plot
+  
+  # add data to plot
+  day <- georgia$date - start
+  lines(day, cumsum(georgia$cases), type='h', col=col.cases, lwd=3, lend='butt' )
+  
+  # plot spaghetti
+  lines(E~cum.time,data=data[[1]], col=col.E.ci, lty=1)
+  lines(I+Iu~cum.time,data=data[[1]], col=col.I.ci, lty=1)
+ # lines(Iu~cum.time,data=data[[1]], col=Iu.col, lty=1)
+  lines(H~cum.time,data=data[[1]], col=col.nowcast.ci, lty=1)
+  lines(C~cum.time,data=data[[1]], col=col.cases.ci, lty=1, lwd=1)
+
+ 
+  axis(1, at=seq(0,max.time,5), labels=format(start+seq(0,max.time,5), format= '%b %d'))
+  axis(2)
+  box()
+
+  if(nsims > 1){
+  for (k in 2:min(100,nsims)) {              #add multiple epidemics to plot
+    lines(E~cum.time, data=data[[k]], col=col.E.ci, type='l', lty=1)
+    lines(I+Iu~cum.time, data=data[[k]], col=col.I.ci, type='l', lty=1)
+ #   lines(Iu~cum.time, data=data[[k]], col=Iu.col, type='l', lty=1)
+    lines(H~cum.time, data=data[[k]], col=col.nowcast.ci, type='l', lty=1)
+    lines(C~cum.time, data=data[[k]], col=col.cases.ci, type='l', lty=1, lwd=1)
+  }
+  
+  # plot means
+  lines(E.mean~cum.time, data=data[[k]], col=col.E, lty=1)
+  lines(I.mean~cum.time, data=data[[k]], col=col.I, lty=1)  
+#  lines(Iu.mean~cum.time, data=data[[k]], col=Iu.mean.col, lty=1)
+  lines(H.mean~cum.time, data=data[[k]], col=col.nowcast, lty=1)
+  lines(C.mean~cum.time, data=data[[k]], col=col.cases, lty=1)
+ } 
+
+   legend('topleft', lty=c(1,1,1,1,1,1), lwd=c(1,1,1,1,3,3), bty='n', cex=0.75,
+         col=c(col.E, col.I, col.nowcast, col.cases, 'black'),
+         legend=c('Latent cases in the community', 'Infectious cases in the community', 'Isolated', 
+                  'Cumulative reported cases (Model)', 'Cumulative reported cases (Data)'))
+}
+```
+
+
+```{r plot-function2}
+plot.model2 <- function(data, log='y'){
+  
+  # A second function plots just the observed and unobserved cases over time
+  
+  # process data
+  nsims <- length(data)
+ 
+  for(i in 1:nsims) data[[i]]$I <- data[[i]]$I1 + data[[i]]$I2 + data[[i]]$I3 +
+      data[[i]]$I4
+  for(i in 1:nsims) data[[i]]$Iu <- data[[i]]$Iu1 + data[[i]]$Iu2 + data[[i]]$Iu3 +
+      data[[i]]$Iu4
+  for(i in 1:nsims) data[[i]]$E <- data[[i]]$E1 + data[[i]]$E2 + data[[i]]$E3 +
+      data[[i]]$E4 + data[[i]]$E5 + data[[i]]$E6
+  
+  max.time<-data[[1]]$cum.time[max(which(data[[1]]$I>0))] #maximum time in first simulation
+  #max.y<-max(data[[1]]$Q)       #find max total confirmed cases for plotting range
+  max.y <- max(unlist(lapply(data, FUN=function(x) max(x$C))))
+  
+  # calculate means
+  m1 <- m2 <- m3 <- m4 <- m5 <- matrix(nrow=length(data[[1]]$I), ncol=nsims)
+  for(i in 1:nsims){
+    m1[,i] <- data[[i]]$E
+    m2[,i] <- data[[i]]$I
+    m3[,i] <- data[[i]]$Iu
+    m4[,i] <- data[[i]]$H
+    m5[,i] <- data[[i]]$C
+  }
+  
+  observed <- m5
+  unobserved <- m1 + m2 + m3 + m4
+  
+  obs.mean <- rowMeans(observed)
+  unobs.mean <- rowMeans(unobserved)
+  cum.time <- data[[1]]$cum.time
+  
+  # colors
+  # E.col <- rgb(0,1,0,.25)
+  # I.col <- rgb(1,0,0,.25)
+  # Iu.col <- rgb(0.5, 0.5, 0, 0.25)
+  # H.col <- rgb(0,0,1,.25)
+  # C.col <- rgb(0,0,0,.25)
+  # E.mean.col <- rgb(0,1,0,1)
+  # I.mean.col <- rgb(1,0,0,1)
+  # Iu.mean.col <- rgb(0.5,0.5,0,1)
+  # H.mean.col <- rgb(0,0,1,1)
+  # C.mean.col <- rgb(0,0,0,1)
+  
+  #set up plot
+  plot(obs.mean~cum.time, xlab='',ylab='Cases',col=1,
+       xlim=c(0,max.time),ylim=c(1,max.y), type='n', lty=1, log=log, axes=FALSE) # set up plot
+  
+  # add data to plot
+  day <- georgia$date - start
+  lines(day, cumsum(georgia$cases), type='h', col=col.cases, lwd=3, lend='butt' )
+  
+  # plot spaghetti
+  lines(unobserved[,1]~cum.time, col=col.E.ci, lty=1)
+  lines(observed[,1]~cum.time, col=col.cases.ci, lty=1, lwd=1)
+ 
+  axis(1, at=seq(0,max.time,5), labels=format(start+seq(0,max.time,5), format= '%b %d'))
+  axis(2)
+  box()
+
+  if(nsims > 1){
+  for (k in 2:min(100,nsims)) {              #add multiple epidemics to plot
+    lines(unobserved[,k]~cum.time,  col=col.E.ci, type='l', lty=1)
+    lines(observed[,k]~cum.time, col=col.cases.ci, type='l', lty=1, lwd=1)
+  }
+  
+  # plot means
+  lines(unobs.mean~cum.time, col=col.E, lty=1)
+  lines(obs.mean~cum.time, col=col.C, lty=1)
+  }
+
+   legend('topleft', lty=c(1,1,1), lwd=c(1,1,3), bty='n', cex=0.75,
+         col=c(col.E, col.C, 'black'),
+         legend=c('Unobserved cases', 'Cumulative reported cases (Model)', 'Cumulative reported cases (Data)'))
+}
+```
+
+
+```{r plot-summary}
+# plot.summary <- function(data){
+#   
+#   #A third plotting function summarizes the model-based distribution of cases and notifications at the current time.
+# 
+#    # process data
+#   nsims <- length(data)
+#  
+#   for(i in 1:nsims) data[[i]]$I <- data[[i]]$I1 + data[[i]]$I2 + data[[i]]$I3 +
+#       data[[i]]$I4
+#   for(i in 1:nsims) data[[i]]$Iu <- data[[i]]$Iu1 + data[[i]]$Iu2 + data[[i]]$Iu3 +
+#       data[[i]]$Iu4
+#   for(i in 1:nsims) data[[i]]$E <- data[[i]]$E1 + data[[i]]$E2 + data[[i]]$E3 +
+#       data[[i]]$E4 + data[[i]]$E5 + data[[i]]$E6
+#   
+#   max.time<-data[[1]]$cum.time[max(which(data[[1]]$I>0))] #maximum time in first simulation
+#   max.y<-max(data[[1]]$I)       #find max total confirmed cases for plotting range
+#   
+#   # calculate means
+#   m1 <- m2 <- m3 <- m4 <- m5 <- matrix(nrow=length(data[[1]]$I), ncol=nsims)
+#   for(i in 1:nsims){
+#     m1[,i] <- data[[i]]$E
+#     m2[,i] <- data[[i]]$I
+#     m3[,i] <- data[[i]]$Iu
+#     m4[,i] <- data[[i]]$H
+#     m5[,i] <- data[[i]]$C
+#   }
+#   E.mean <- rowMeans(m1)
+#   I.mean <- rowMeans(m2)
+#   Iu.mean <- rowMeans(m3)
+#   H.mean <- rowMeans(m4)
+#   C.mean <- rowMeans(m5)
+#   
+#   # colors
+#   E.col <- rgb(0,1,0,.25)
+#   I.col <- rgb(1,0,0,.25)
+#   Iu.col <- rgb(0.5, 0.5, 0, 0.25)
+#   H.col <- rgb(0,0,1,.25)
+#   C.col <- rgb(0,0,0,.25)
+#   E.mean.col <- rgb(0,1,0,1)
+#   I.mean.col <- rgb(1,0,0,1)
+#   Iu.mean.col <- rgb(0.5,0.5,0,1)
+#   H.mean.col <- rgb(0,0,1,1)
+#   C.mean.col <- rgb(0,0,0,1)
+#   
+#   #set up plot
+#   j <- max(which(data[[1]]$time < today.day))
+#   
+#   h1 <- hist(log10(m1[j,]+m2[j,]+m3[j,]+m4[j,]), plot=FALSE)  # total unnotifed cases in the community is E+I+Iu+H
+#   h2 <- hist(log10(m5[j,]), plot=FALSE)         # total case notifications
+#   
+#   xlim <- c(floor(min(c(h1$mids, h2$mids))),ceiling(max(c(h1$mids, h2$mids))))
+#   ylim <- c(0, ceiling(max(c(h1$density, h2$density))))
+#   
+#   plot(xlim, ylim, type='n', axes=FALSE, xlab='Outbreak size', ylab='Probability density', main=paste('Total observed and unobserved cases as of', today))
+#   lines(h1$mids, h1$density, type='l', lwd=3, lend='butt', col=rgb(0.5,0.5,0, 0.5))
+#   lines(h2$mids, h2$density, type='l', lwd=3, lend='butt', col=C.col)
+#   legend('topleft', lty=1, col = c(rgb(0.5,0.5,0, 0.5), C.col), legend=c('Unobserved cases', 'Case notifications'), bty='n')
+#   axis(1, seq(min(xlim), max(xlim), by=1), labels=formatC(10^seq(min(xlim), max(xlim), by=1), format='d', big.mark=","))
+#   box()
+# }
+```
+
+
+```{r}
+# plot daily case notificatiopns
+plot.cases <- function(model, data, title=''){
+  
+  #peak <- c()
+    
+  max.time<-max(model[[1]]$cum.time) #maximum time in first simulation
+  
+  get.curve <- function(x){
+    dt <- x$cum.time[2]-x$cum.time[1]
+    report.times <- seq(1,(length(x$cum.time)), by=1/dt)
+    case.notifications <- diff(x$C[report.times])
+  }
+  
+  plot(get.curve(model[[1]]), type='l', ylim=c(0, max(max(data$cases), 1.6*max(get.curve(model[[1]])))),
+       xlab='Day', ylab='New case notifications', main=title, cex.main=0.8,
+       col=col.cases.ci, axes=FALSE)
+  for(i in 2:length(model)) lines(get.curve(model[[i]]), type='l', col=col.cases.ci)
+  axis(1, at=seq(0,max.time,5), labels=format(start+seq(0,max.time,5), format= '%b %d'))
+  axis(2)
+  box()
+
+  
+  day <- data$date - start
+  lines(day, data$cases, type='h', col=col.cases, lwd=3, lend='butt' )
+  
+  #peak <- c(peak,which.max(case.notifications))
+}
+
+```
+
+## Scenario analysis
+
+Simulation results are illustrated in the following figures.
+Note the different y-axes.
+
+### Panel analysis
+
+A panel of scenarios is summarized as the range in total number of cases four weeks from the present time (over 25 different simulations).
+For planning purposes it might be assumed that case fatalities will be approximately 1% of the total number of cases.
+In general, scenarios 1-8 are no longer considered plausible with scenarios 9-15 reflecting our best current understanding. 
+The scenario considered most likely is highlighted in red.
+The following figures examine some specific scenarios in more detail.
+
+```{r simulation}
+scenarios <- read.csv('Georgia scenarios - Sheet1.csv')
+start=as.Date("2020-03-01")
+
+scenarios.output <- list()
+for(i in 1:dim(scenarios)[1]){
+  #print(i)
+  parms <- as.list(scenarios[i,3:13])
+  init <- as.list(scenarios[i,14:31])
+  startdate = as.Date("2020-03-01")
+  scenarios.output[[i]] <- evaluate.model(params=parms, init = init, nsims=25, nstep=NULL, start=startdate)
+}
+
+#save all simulation results to file for further processing
+allres = scenarios.output
+allres$startdate = startdate
+saveRDS(allres,'simresults.rds')
+
+get.range <- function(simulations){
+  # function to get the min and max total number of cases
+  min <- min(unlist(lapply(simulations, function(x) tail(x$C,1))))
+  max <- max(unlist(lapply(simulations, function(x) tail(x$C,1))))
+  range <- c(min, max)
+}
+
+out <- lapply(scenarios.output, get.range)
+
+plot.ensemble <- function(x, plausible=9){
+  n <- length(x)
+  c <- rep(col.cases,n)
+  c[plausible] <- col.I
+  min <- min(unlist(out))
+  max <- max(unlist(out))
+  par(mar=c(5,5,4,1)+0.1)
+  plot(x = c(0,max), y=c(0.5,n), type='n', axes=FALSE, xlab='Cases', ylab='', xlim=c(100,100000), log='x',
+       main=paste('Outbreak size by', format(Sys.Date()+28, '%B %d, %Y')), cex.main=1)
+  abline(v=10^seq(2,6), col='lightgray', lty=2)
+  for(i in 1:n) lines(c(out[[i]][1], out[[i]][2]), c(i,i), lwd=5, lend='butt', col=c[i])
+  axis(1, at=10^seq(2,5), labels=format(10^seq(2,5), scientific=FALSE), cex.axis=0.55)
+  Map(axis, side=2, at=1:n, col.axis=c, labels=scenarios[,1], lwd=0, las=1, cex.axis=0.55)
+  box()
+}
+plot.ensemble(out)
+
+```
+
+# Scenarios
+
+Here we explore a range of scenarios for COVID-19 transmission in Georgia.
+All simulations start on 1 March, although a variety of different assumptions are made about the size of the epidemic in Georgia at that time.
+In all cases, March 12 is taken to be the date of intervention.
+All scenarios were considered realistic possibilities at some point.
+Currently, Scenario 9 is considered the most likely.
+It is noteworthy that these scenarios envision social distancing to have an impact similar to that observed in Hubei, China (COVID 19) or Sydney, Australia (1918 flu), which is to say a very successful intervention. 
+Less severe restrictions or weak compliance would reduce the impact.
+Note that descriptions outline the main differences among scenarios, but other minor differences have been incorporated as new information has been received and understanding has improved.
+
+Each set of simulations is shown twice.
+The first plot shows the *cumulative* number of cases to allow comparison with what a lot of other studies are showing (the curve of "exponential growth") -- note the logarithmic axis.
+The second plot shows the number of *new case notifications*, which is better for comparing the fit of the model to data.
+
+# Scenarios 1-5: Outbreak size at the time of intervention
+
+Scenarios 1-5 were created to investigate the importance of initial outbreak size (i.e. number of infections on 1 March) and role of presymptomatic transmission, which is known to have played a major role in transmission in mainland China.
+Comparison of Scenarios 1, 2 and 3 illustrates the effects of an escalation of interventions.
+Comparison of Scenarios 3, 4, and 5 illustrates the effects of delay between the start of the epidemic and intervention.
+
+**Scenario 1:** Natural epidemic with no presymptomatic transmission and excellent case ascertainment; 64 initial infections.
+
+**Scenario 2:** Rapid case isolation with no presymptomatic transmission and excellent case ascertainment; 64 initial infections.
+
+**Scenario 3:** Social distancing and rapid case isolation with no presymptomatic transmission and excellent case ascertainment; 8 initial infections.
+
+**Scenario 4:** Social distancing and rapid case isolation with no presymptomatic transmission and excellent case ascertainment; 64 initial infections.
+
+**Scenario 5:** Social distancing and rapid case isolation with no presymptomatic transmission and excellent case ascertainment; 128 initial infections.
+
+```{r}
+plot.model(scenarios.output[[1]], log='y', title='Scenario 1')
+plot.cases(scenarios.output[[1]], georgia, title='Scenario 1')
+```
+
+```{r}
+plot.model(scenarios.output[[2]], log='y', title='Scenario 2')
+plot.cases(scenarios.output[[2]], georgia, title='Scenario 2')
+```
+
+```{r}
+plot.model(scenarios.output[[3]], log='y', title='Scenario 3')
+plot.cases(scenarios.output[[3]], georgia, title='Scenario 3')
+```
+
+```{r}
+plot.model(scenarios.output[[4]], log='y', title='Scenario 4')
+plot.cases(scenarios.output[[4]], georgia, title='Scenario 4')
+```
+
+```{r}
+plot.model(scenarios.output[[5]], log='y', title='Scenario 5')
+plot.cases(scenarios.output[[5]], georgia, title='Scenario 5')
+```
+
+# Scenarios 6-8: Effects of interventions
+
+Scenarios 6-8 were initiated at what was considered the most plausible size of the outbreak on March 1 (now viewed to be highly optimistic) with a significant amount of presymptomatic transmission acros a range of interventions.
+A comparison of scenarios 6-8 with scenarios 1, 2, and 4 isolates the effect of presymptomatic transmission.
+The existence of presymptomatic transmission results in two- to five-fold increases in the size of the outbreak.
+The effects of each stage in the escalation of intervention (do nothing -> rapid isolation -> social distancing) are illustrated by comparing scenario 6 with scenario 7 and scenario 7 awith scenario 8.
+
+**Scenario 6:** Natural epidemic with presymptomatic transmission and excellent case ascertainment; 64 initial infections.
+
+**Scenario 7:** Rapid case isolation with presymptomatic transmission and excellent case ascertainment; 64 initial infections.
+
+**Scenario 8:** Social distancing and rapid case isolation with presymptomatic transmission and excellent case ascertainment; 64 initial infections.
+
+```{r intervention-efffect}
+mean.1 <- mean(unlist(lapply(scenarios.output[[1]], function(x) tail(x$C,1))))
+mean.2 <- mean(unlist(lapply(scenarios.output[[2]], function(x) tail(x$C,1))))
+mean.4 <- mean(unlist(lapply(scenarios.output[[4]], function(x) tail(x$C,1))))
+mean.6 <- mean(unlist(lapply(scenarios.output[[6]], function(x) tail(x$C,1))))
+mean.7 <- mean(unlist(lapply(scenarios.output[[7]], function(x) tail(x$C,1))))
+mean.8 <- mean(unlist(lapply(scenarios.output[[8]], function(x) tail(x$C,1))))
+effects.of.presymptomatic <- c(mean.6/mean.1, mean.7/mean.2, mean.8/mean.4)
+```
+
+```{r}
+plot.model(scenarios.output[[6]], log='y', title='Scenario 6')
+plot.cases(scenarios.output[[6]], georgia, title='Scenario 6')
+```
+
+```{r}
+plot.model(scenarios.output[[7]], log='y', title='Scenario 7')
+plot.cases(scenarios.output[[7]], georgia, title='Scenario 7')
+```
+
+```{r}
+plot.model(scenarios.output[[8]], log='y', title='Scenario 8')
+plot.cases(scenarios.output[[8]], georgia, title='Scenario 8')
+```
+
+# Scenarios 9 & 10: Most plausible scenarios
+
+Scenarios 9-15 reflect our changing understanding of the epidemic in Georgia.
+Specifically, transmissibility has been reduced from $\beta=0.658$ to $\beta = 0.340$ to reflect transmission in many places outside of Hubei and the incubation period has been been reduced from 6.4 days to 5,4 days in keeping with our analysis of travel cases with known exposure times.
+A more significant change is that we have increased the initial epidemic size on March 1 from 64 or 128 to 447.
+As of 24 March, a total of 50 cases reported the onset of symptoms on or before 1 March 2020. 
+Records of symptom onset exist for 160 out of 182 (87.9%) cases recorded on or before before March 15.
+Further, two cases were hospitalized on or before March. 1
+We therefore assume that $42/(0.879)-2 \approx 55$ persons known to the data set were infectious on March 1.
+Additionally, of the cases reporting symptom onset after 2 March, we estimate from the incubation period that 23 had already acquired the infection on 1 March.
+We therefore assume $23/(1-0.879) \approx 23$ latent infections on 1 March.
+Thus, we initialize the epidemic on March 1 with $55+23=78$ cases that would become known.
+There are, presumably, additional asymptomatic or mildly symptomatic cases that were not known and would not become known, but nevertheless contribute to transmission. 
+We estimated the ascertainment rate in Wuhan at a simular stage of the epidemic to be 11%.
+We therefore assume that on March 1 there were approximately $55/0.11 \approx 500$ total infectious cases, of which $500-55=445$ are mildly symptomatic and therefore potentially less infectious.
+Additionally, we assume that there are $23/0.11 \approx 209$ latent cases. 
+Thus, we assume that there were $445+209=654$ total infections in the population on March 1.
+This is a nearly tenfold increase in the supposed number of initial infections compared with most of scenarios 1-8.
+It nonetheless accords with other evidence.
+
+1. It is based on an independent estimate of the ascertainment rate in Wuhan around the same stage of outbreak.
+2. It suggests that cases in Georgia were vastly underdetected (somewhere between 1 in 100 or 1 in 500) in February and early March. This is entirely consistent with what is now known about the number of tests performed, particularly just a few tests each day for the first week of March, all of which were positive. The number of test results received remained small (<150) until March 18.
+3. It seems unlikely that a very large city and transportation hub like Atlanta should be seeded substantially later or have a substantially smaller epidemic than other major cities such as New York, Seattle, and the San Francisco Bay area. 
+4. As of March 22, Georgia has reported 25 deaths. With an infection fatality rate of 0.9% and an average time from symptom onset to death of 15 days, this equates to around $25/0.009 \approx 2778$ infections on March 7 (about one to two infection generations after March 1). If there had been just 64 cases on March 1, one would only expect to have observed around 2 deaths by March 22. 
+5. It broadly reflects our understanding of ascertainment rate in the country as whole, whch we estimate to have increased from 1% to 10% in February and March.
+
+A comparison of scenarios 9 and 10 looks at the effect of "realistic case isolation, i.e. matching the isolation rate to observed symptom onset to hospitalization intervals in Georgia vs. a switch in isolation rate from high to low on March 12, corresponding with other interventions.
+Scenario 9 (switch in isolation rate), which predicts outbreaks of around 20,000 known cases by April 10, is possibly more plausible than scenario 10 (gradual increase in isolation), which predicts outbreaks of around 15,000 known cases.
+
+**Scenario 9:** Social distancing and rapid case isolation with moderate presymptomatic transmission, step change in isolation, and improving case ascertainment; 555 initial infections.
+
+**Scenario 10:**  Social distancing and rapid case isolation with moderate presymptomatic transmission, gradual change in isolation, and improving case ascertainment; 555 initial infections.
+
+```{r}
+plot.model(scenarios.output[[9]], log='y', title='Scenario 9')
+plot.cases(scenarios.output[[9]], georgia, title='Scenario 9')
+```
+
+```{r}
+plot.model(scenarios.output[[10]], log='y', title='Scenario 10')
+plot.cases(scenarios.output[[10]], georgia, title='Scenario 10')
+```
+
+```{r}
+mean.9 <- mean(unlist(lapply(scenarios.output[[9]], function(x) tail(x$C,1))))
+mean.10 <- mean(unlist(lapply(scenarios.output[[10]], function(x) tail(x$C,1))))
+```
+
+# Scenarios 11-12: Presymptomatic infectiousness
+
+The extent of presymptomatic infectiousness is poorly understood.
+Scenarios 11 and 12 provide a sensitivity analysis in comparison to scenario 9.
+
+**Scenario 11:**  Social distancing and rapid case isolation with modest presymptomatic transmission (approximately half compared with scenario 9), step change in isolation, and improving case ascertainment; 555 initial infections.
+
+**Scenario 12:**  Social distancing and rapid case isolation with significant presymptomatic transmission (approximately twice compared with scenario 9), step change in isolation, and improving case ascertainment; 555 initial infections.
+
+```{r}
+plot.model(scenarios.output[[11]], log='y', title='Scenario 11')
+plot.cases(scenarios.output[[11]], georgia, title='Scenario 11')
+```
+```{r}
+plot.model(scenarios.output[[12]], log='y', title='Scenario 12')
+plot.cases(scenarios.output[[12]], georgia, title='Scenario 12')
+```
+
+# Scenarios 13-14: Effectiveness of case finding
+
+Scenarios 1-8 assume complete case finding, which is inconsistent with the current observation of widespread community transmission.
+Scenarios 9-12 assume that ascertainment is 11% prior to March 12 and 90% after that.
+Scenarios 13-14 in comparison with scenario 9 provides a sensitivity analysis to the assumption of an eventual 90% case ascertainment rate.
+
+**Scenario 13:** Social distancing and rapid case isolation with moderate presymptomatic transmission, step change increase in isolation, and excellent (95%) case ascertainment; with 555 initial infections.
+
+**Scenario 14:** Social distancing and rapid case isolation with moderate presymptomatic transmission, step change increase in isolation, and poor (50%) case ascertainment; with 555 initial infections.
+
+```{r}
+plot.model(scenarios.output[[13]], log='y', title='Scenario 13')
+plot.cases(scenarios.output[[13]], georgia, title='Scenario 13')
+```
+```{r}
+plot.model(scenarios.output[[14]], log='y', title='Scenario 14')
+plot.cases(scenarios.output[[14]], georgia, title='Scenario 14')
+```
+
+# Scenarios 15: Social distancing
+
+Scenario examines the current most plausible model (scenario 9) but without current social distacing interventions.
+Social distancing, in these scenarios, is found to reduce the average epidemic size in four weeks by more than half from approximately 42,000 cases to 20,000 cases.
+
+**Scenario 15:** Rapid case isolation with moderate presymptomatic transmission, step change increase in isolation, and good case ascertainment; 555 initial infections.
+
+```{r}
+plot.model(scenarios.output[[15]], log='y', title='Scenario 15')
+plot.cases(scenarios.output[[15]], georgia, title='Scenario 15')
+```
+
+```{r}
+mean.15 <- mean(unlist(lapply(scenarios.output[[15]], function(x) tail(x$C,1))))
+social.distancing.effect <- mean.15/mean.9
+```
+
+## Model details
+
+Key features of this model include:
+
+1. Stochastic transmission process
+2. Realistic wait time distributions
+3. Time varying rates of case detection, isolation, and case notification
+4. Realistic intervention scenarions
+5. Data from Georgia concerning initial conditions.
+
+This model was parameterized using clinical outcome reports from the epidemic in Hubei province, China and further calibrated with information about COVID-19 elsewhere in China.
+The COVID-19 epidemic is changing rapidly and information that was used in the construction of this model may be incomplete or contain errors.
+Accordingly, these results are preliminary, provisional, and subject to change.
+These results have not been peer-reviewed, but have been prepared to a professional standard with the intention of providing useful interpretation of a rapidly developing event.
+
+### Assumptions
+
+Transmissibility of the virus is based on the Imperial College estimate that, outside Hubei, the basic reproduction number is $R_0=2.4$. Assuming a serial interval of 7 days, models were simulated with transmissibility $\beta_0 = 0.6584$. 
+The model can be optionally parameterized to allow or disallow presymptomatic transmission[^1] in the last day of the latent period.
+The duration of presymptomatic transmission is is assumed to average 9.5 days.[^2]
+
+Given widespread awareness about COVID-19, it is assumed that case isolation will be relatively rapid and effective. Three scenarios for case isolation are considered:
+
+1. Case identification is perfect (Scenarios 1-8)
+2. Case identification is 11% prior to March 12 and 90% thereafter (Scenarios 9-12)
+3. Variable case identification (Scenarios 13-15)
+
+We assume that the primary effect of social distancing is to reduce transmissibility ($\beta$), which considers not only the infectiousness of the virus, but also the realized rate of contact.
+Transmission is modeled according to pre-intervention and post-intervention conditions.
+The assumed date of intervention is March 12, the day the first case fatality was reported (increasing public awareness), Emory University and the University System of Georgia announced the suspension of classes, and numerous school districts announced closures.
+We assume a natural symptomatic infectious period prior to March 12 and a symptomatic infectious period averaging 1.5 days from symptom onset to isolation after that. Interestingly, this isolation rate yields an effective reproduction number right around 1.
+We assume that, on average, case notification takes five days due to the lack of testing kits and turnaround time.
+
+Prior to implementation, the effectiveness of interventions is impossible to quantify precisely.
+Studies of previous epidemics have quantified the impact of a variety of social distancing measures. 
+For seasonal influenza, school closure due to holidays (which is presumably not accompanied by other social and hygienic responses) reduced the basic reproduction number from 1.7 to 1.4 (a reduction of 18%).[^3]
+A nationwwide elementary school strike in Israel in 2000 reduced influenza transmission by 14.6%.[^4]
+Much more severe social distancing measures taken in Sydney, Australia during the 1918 influenza pandemic reduced the effective reproduction number by 38%.[^5] 
+Finally, preliminary estimates of the effectiveness of the Chinese "lockdown" suggest that this highly intensive social distancing reduced the effective reproduction number from 2.2 to 1.58 (a reduction of 28%)[^6], from 4.65 to 1.8 (a reduction of 61.2%)[^7], or from 2.35 to 1.05 (a reduction of 55%)[^8].
+In our model, scenarios with social distancing assume interventions taken in Georgia around March 12 reduce transmission by 50%.
+
+[^1]:[Rong et al. 2020](https://wwwnc.cdc.gov/eid/article/26/5/20-0198_article?deliveryName=DM20712), [Du et al. 2020](https://www.medrxiv.org/content/10.1101/2020.02.19.20025452v3)
+
+[^2]:[Hu et al. 2020](https://link.springer.com/article/10.1007%2Fs11427-020-1661-4)
+
+[^3]:[Cauchemez et al. 2008](https://www.nature.com/articles/nature06732)
+
+[^4]:[Heymann et al. 2009](https://www.cambridge.org/core/journals/epidemiology-and-infection/article/school-closure-may-be-effective-in-reducing-transmission-of-respiratory-viruses-in-the-community/6B520221D55ACDE66E3F6CF23BCBEB30/core-reader)
+
+[^5]:[Caley et al. 2007](https://royalsocietypublishing.org/doi/full/10.1098/rsif.2007.1197?casa_token=eQnQR8Pr0x4AAAAA%3AGrDc1y8Xl8cbUt8eiNJNmKzLzre_1ZSw8U07JFyQaiQDuzGqpGY--pK-OU9ZwD3_yCK3aRGO2v2R)
+
+[^6]:[Zhang et al. 2020](https://www.medrxiv.org/content/10.1101/2020.03.04.20031187v1.full.pdf+html)
+
+[^7]:[Ku et al. 2020](https://poseidon01.ssrn.com/delivery.php?ID=149097083081121107119088102127125091104014059082060018071002088023117023118119006064117119051059021051011087108012116008095022020070011051015025013007073017109103010062078052086001096098123086023082090125067125099026125023106011006064116123116121094087&EXT=pdf)
+
+[^8]:[Kucharski et al. 2020](https://www.thelancet.com/journals/laninf/article/PIIS1473-3099(20)30144-4/fulltext)
+
+### Initialization
+
+The model is created for a population of 10.6 million people, approximately the population size of Georgia, which is similar to the city of Wuhan, China. Transmission is simulated forward from March 1.
+
+
+
